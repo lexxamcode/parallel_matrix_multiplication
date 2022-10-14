@@ -12,16 +12,14 @@
 
 namespace lab1
 {
-    typedef std::vector<std::vector<float>> fmatrix;
+    typedef std::vector<std::vector<int>> fmatrix;
 
 //Makes random matrix needed size
     fmatrix makeMatrix(const size_t &rows, const size_t &columns)
     {
         fmatrix matrix(rows);
 
-        std::random_device rd;
-        std::mt19937 gen(rd());
-        std::uniform_real_distribution<> dist(1, 10);
+        srand(time(NULL));
         size_t i, j;
 
         #pragma omp parallel for shared(matrix) private(i, j)
@@ -30,7 +28,7 @@ namespace lab1
             matrix[i].resize(columns);
 
             for (j = 0; j < columns; j++)
-                matrix[i][j] = dist(gen);
+                matrix[i][j] = rand() % 10;
         }
 
         return matrix;
@@ -70,8 +68,8 @@ namespace lab1
         if (!min) throw "Can not open the file";
 
         fmatrix matrix;
-        std::vector<float> temp;
-        float temp_element;
+        std::vector<int> temp;
+        int temp_element;
 
         while(min >> temp_element)
         {
