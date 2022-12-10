@@ -1,0 +1,6 @@
+#!/bin/bash
+#SBATCH --job-name=matMulOMP_1024
+#SBATCH --time=1:00:00
+#SBATCH --partition batch
+
+bash ./lab.sh
