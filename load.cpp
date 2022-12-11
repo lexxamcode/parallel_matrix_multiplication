@@ -127,15 +127,16 @@ int main(int argc, char *argv[])
 
     const size_t size = atoi(argv[1]);
 
-    printf("Begin initializing ...\n");
+    if (ProcRank == 0)
+	printf("Begin initializing ...\n");
 
     // Load matrices from fiels:
     int* a_matrix = load_matrix("a.txt", size);
     int* b_matrix = load_matrix("b.txt", size);
 
     int* c_matrix = (int*)malloc(sizeof(int)*size*size);
-
-    printf("Begin calculating ...\n");
+    if (ProcRank == 0)
+    	printf("Begin calculating ...\n");
 
 	start = clock();
 
@@ -147,11 +148,12 @@ int main(int argc, char *argv[])
 
 	MPI_mmult(a_matrix, b_matrix, c_matrix, size);
 
-    printf("Calculation time: %f seconds.\n", double(clock() - start)/CLOCKS_PER_SEC);
-
     /* Write result to file if main thread*/
     if (ProcRank == 0)
+    {
     	write_matrix_to_file(c_matrix, size, "c.txt");
+    	printf("(%d Threads; %d Size): %f seconds.\n", ProcNum, size, double(clock() - start)/CLOCKS_PER_SEC);
+    }
 
     // free memory
     free(a_matrix);
