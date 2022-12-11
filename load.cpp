@@ -1,19 +1,13 @@
-#include <stdio.h>
+#include "mpi.h"
 #include <stdlib.h>
-#include <time.h>
-#include <string.h>
-#include <omp.h>
+#include <stdio.h>
+#include "time.h"
 
-int** load_matrix(const char* filename, size_t size)
+int* load_matrix(const char* filename, size_t size)
 {
     FILE* file;
 
-    int** matrix = (int**)malloc(sizeof(int*)*size);
-
-    for (size_t i = 0; i < size; i++)
-    {
-        matrix[i] = (int*)malloc(sizeof(int)*size);
-    }
+    int* matrix = (int*)malloc(sizeof(int)*size*size);
 
     if ((file = fopen(filename, "r")) == NULL)
         printf("Cannot open file.\n");
@@ -21,13 +15,13 @@ int** load_matrix(const char* filename, size_t size)
     for (size_t i = 0; i < size; i++)
     {
         for (size_t j = 0; j < size; j++)
-            fscanf(file, "%d ", &matrix[i][j]);
+            fscanf(file, "%d ", &matrix[i*size + j]);
     }
 
     return matrix;
 }
 
-void write_matrix_to_file(int** matrix, size_t size, const char* name)
+void write_matrix_to_file(int* matrix, size_t size, const char* name)
 {
     FILE* file;
 
@@ -37,49 +31,132 @@ void write_matrix_to_file(int** matrix, size_t size, const char* name)
     for (size_t i = 0; i < size; i++)
     {
         for (size_t j = 0; j < size; j++)
-            fprintf(file, "%d ", matrix[i][j]);
+            fprintf(file, "%d ", matrix[i*size + j]);
         fprintf(file, "\n");
     }
 }
 
-int** multiply_matrices(int** a, int** b, size_t size)
+// MPI routines
+int ProcNum, ProcRank;
+
+//————————————————-
+void Flip (int *B, size_t size)
 {
-    int** c = (int**)malloc(sizeof(int*)*size);
-    for (size_t i = 0; i < size; i++)
-    {
-        c[i] = (int*)malloc(sizeof(int)*size);
-    }
-
-    size_t i, j, k;
-    unsigned start_time = clock();
-    int threadnum = 4;
-
-    #pragma omp parallel for shared(matrix_a, matrix_b, result) private(i, j, k) num_threads(threadnum)
-    for (i = 0; i < size; i++) {
-        for (j = 0; j < size; j++) {
-            c[i][j] = 0;
-            for (k = 0; k < size; k++) {
-                c[i][j] += a[i][k] * b[k][j];
-            }
-        }
-    }
-    unsigned end_time = clock() - start_time;
-    printf("For %d threads and %d size: %d seconds;\n", threadnum, size, end_time);
-    return c;
+	int temp=0;
+	for (size_t i=0;i<size;i++)
+	{
+		for (size_t j=i+1;j<size;j++)
+		{
+			temp = B[i*size+j];
+			B[i*size+j] = B[j*size+i];
+			B[j*size+i] = temp;
+		}
+	}
 }
 
-int main(int argc, char* argv[])
+void MPI_mmult(int *A, int *B, int *C, size_t size)
 {
-    size_t size;
-    if (argc == 1)
-        size = 10;
-    if (argc == 2)
-        sscanf(argv[1], "%u", &size);
+	size_t dim = size;
+	int i, j, k, p, ind;
+	int temp;
+	MPI_Status Status;
+	int ProcPartSize = dim/ProcNum;
+	int ProcPartElem = ProcPartSize*dim;
+	int* bufA = (int*)malloc(sizeof(int)*ProcPartElem);
+	int* bufB = (int*)malloc(sizeof(int)*ProcPartElem);
+	int* bufC = (int*)malloc(sizeof(int)*ProcPartElem);
+	int ProcPart = dim/ProcNum, part = ProcPart*dim;
 
-    int** a_matrix = load_matrix("a.txt", size);
-    int** b_matrix = load_matrix("b.txt", size);
-    int** c_matrix = multiply_matrices(a_matrix, b_matrix, size);
-    write_matrix_to_file(c_matrix, size, "c.txt");
+	if (ProcRank == 0)
+		Flip(B, size);
+
+	MPI_Scatter(A, part, MPI_INT, bufA, part, MPI_INT, 0, MPI_COMM_WORLD);
+	MPI_Scatter(B, part, MPI_INT, bufB, part, MPI_INT, 0, MPI_COMM_WORLD);
+
+	temp = 0;
+	for (i=0; i < ProcPartSize; i++) {
+		for (j=0; j < ProcPartSize; j++) {
+			for (k=0; k < dim; k++)
+				temp += bufA[i*dim+k]*bufB[j*dim+k];
+			bufC[i*dim+j+ProcPartSize*ProcRank] = temp;
+			temp = 0;
+		}
+	}
+
+	int NextProc; int PrevProc;
+	for (p=1; p < ProcNum; p++) {
+		NextProc = ProcRank+1;
+		if (ProcRank == ProcNum-1)
+			NextProc = 0;
+		PrevProc = ProcRank-1;
+		if (ProcRank == 0)
+			PrevProc = ProcNum-1;
+		MPI_Sendrecv_replace(bufB, part, MPI_INT, NextProc, 0, PrevProc, 0, MPI_COMM_WORLD, &Status);
+		temp = 0;
+		for (i=0; i < ProcPartSize; i++) {
+			for (j=0; j < ProcPartSize; j++) {
+				for (k=0; k < dim; k++) {
+					temp += bufA[i*dim+k]*bufB[j*dim+k];
+				}
+				if (ProcRank-p >= 0 )
+					ind = ProcRank-p;
+				else ind = (ProcNum-p+ProcRank);
+				bufC[i*dim+j+ind*ProcPartSize] = temp;
+				temp = 0;
+			}
+		}
+	}
+
+	MPI_Gather(bufC, ProcPartElem, MPI_INT, C, ProcPartElem, MPI_INT, 0, MPI_COMM_WORLD);
+
+	free(bufA);
+	free(bufB);
+	free(bufC);
+
+	MPI_Finalize();
+}
+
+int main(int argc, char *argv[])
+{
+    clock_t start;
+    if (argc != 2)
+    {
+	printf("Program usage: \n./%s <n>\nwhere <n> is the size of square matrix\n", argv[0]);
+	return -1;
+    }
+
+    const size_t size = atoi(argv[1]);
+
+    printf("Begin initializing ...\n");
+
+    // Load matrices from fiels:
+    int* a_matrix = load_matrix("a.txt", size);
+    int* b_matrix = load_matrix("b.txt", size);
+
+    int* c_matrix = (int*)malloc(sizeof(int)*size*size);
+
+    printf("Begin calculating ...\n");
+
+	start = clock();
+
+	// Begin MPI
+	MPI_Init(&argc, &argv);
+
+	MPI_Comm_size(MPI_COMM_WORLD, &ProcNum);
+	MPI_Comm_rank(MPI_COMM_WORLD, &ProcRank);
+
+	MPI_mmult(a_matrix, b_matrix, c_matrix, size);
+
+    printf("Calculation time: %f seconds.\n", double(clock() - start)/CLOCKS_PER_SEC);
+
+    /* Write result to file if main thread*/
+    if (ProcRank == 0)
+    	write_matrix_to_file(c_matrix, size, "c.txt");
+
+    // free memory
+    free(a_matrix);
+    free(b_matrix);
+    free(c_matrix);
 
     return 0;
 }
