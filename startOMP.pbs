@@ -3,4 +3,5 @@
 #SBATCH --time=1:00:00
 #SBATCH --partition batch
 
+mpd --ncpus=2 &
 bash ./lab.sh
